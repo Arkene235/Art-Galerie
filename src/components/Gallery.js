@@ -449,78 +449,142 @@ const Gallery = () => {
   const [oeuvres, setOeuvres] = useState([]);
   const [editingOeuvre, setEditingOeuvre] = useState(null);
   const [selectedOeuvre, setSelectedOeuvre] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
 
-  useEffect(() => {
-    const fetchOeuvres = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, "oeuvres"));
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setOeuvres(data);
-      } catch (error) {
-        console.error("Erreur lors du chargement des œuvres:", error);
-        alert("Erreur lors du chargement des œuvres");
-      }
-    };
-    fetchOeuvres();
-  }, []);
-
-  const handleUpload = async () => {
-    if (!file && !editingOeuvre) return;
-
+  const fetchOeuvres = async () => {
     try {
-      let imageUrl = editingOeuvre?.imageUrl;
-
-      if (file) {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onloadend = async () => {
-          imageUrl = reader.result;
-          await saveOeuvre(imageUrl);
-        };
-      } else {
-        await saveOeuvre(imageUrl);
-      }
+      const querySnapshot = await getDocs(collection(db, "oeuvres"));
+      const oeuvresData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setOeuvres(oeuvresData);
     } catch (error) {
-      console.error("Erreur:", error);
-      alert("Une erreur est survenue");
+      console.error("Erreur lors du chargement des œuvres:", error);
+      alert("Erreur lors du chargement des œuvres");
     }
   };
 
-  const saveOeuvre = async (imageUrl) => {
+  useEffect(() => {
+    fetchOeuvres();
+  }, []);
+
+  const compressImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // Réduire la taille si l'image est trop grande
+          if (width > 1920) {
+            height = (1920 * height) / width;
+            width = 1920;
+          }
+          if (height > 1080) {
+            width = (1080 * width) / height;
+            height = 1080;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Convertir en JPEG avec une qualité de 0.8
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(compressedDataUrl);
+        };
+        img.onerror = reject;
+      };
+      reader.onerror = reject;
+    });
+  };
+
+  const handleUpload = async (e) => {
+    e.preventDefault();
+    
+    if (!selectedFile) {
+      alert("Veuillez sélectionner une image");
+      return;
+    }
+
     try {
+      // Vérification de la taille du fichier (max 10MB)
+      if (selectedFile.size > 10 * 1024 * 1024) {
+        alert("L'image est trop volumineuse. Maximum 10MB autorisé.");
+        return;
+      }
+
+      // Vérification du type de fichier
+      if (!selectedFile.type.match(/image\/(jpeg|png|jpg|gif)/)) {
+        alert("Format d'image non supporté. Utilisez JPG, PNG ou GIF.");
+        return;
+      }
+
+      // Compression de l'image
+      const compressedImage = await compressImage(selectedFile);
+      
       if (editingOeuvre) {
+        // Mise à jour d'une œuvre existante
         await updateDoc(doc(db, "oeuvres", editingOeuvre.id), {
           titre,
           details,
-          imageUrl,
+          imageUrl: compressedImage,
           updatedAt: new Date()
         });
-        
-        setOeuvres(oeuvres.map(o => 
-          o.id === editingOeuvre.id 
-            ? { ...o, titre, details, imageUrl }
-            : o
-        ));
-        
         setEditingOeuvre(null);
       } else {
-        const docRef = await addDoc(collection(db, "oeuvres"), {
+        // Création d'une nouvelle œuvre
+        await addDoc(collection(db, "oeuvres"), {
           titre,
           details,
-          imageUrl,
+          imageUrl: compressedImage,
           createdAt: new Date()
         });
-
-        setOeuvres([...oeuvres, { id: docRef.id, titre, details, imageUrl }]);
       }
-
+      
       setTitre("");
       setDetails("");
-      setFile(null);
-      alert(editingOeuvre ? "Œuvre mise à jour avec succès !" : "Œuvre ajoutée avec succès !");
+      setSelectedFile(null);
+      setImagePreview(null);
+      fetchOeuvres();
     } catch (error) {
-      console.error("Erreur lors de la sauvegarde:", error);
-      alert("Une erreur est survenue lors de la sauvegarde");
+      console.error("Erreur lors de l'upload:", error);
+      alert("Une erreur est survenue lors de l'upload de l'image. Veuillez réessayer.");
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Vérification de la taille du fichier (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert("L'image est trop volumineuse. Maximum 10MB autorisé.");
+        return;
+      }
+
+      // Vérification du type de fichier
+      if (!file.type.match(/image\/(jpeg|png|jpg|gif)/)) {
+        alert("Format d'image non supporté. Utilisez JPG, PNG ou GIF.");
+        return;
+      }
+
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImagePreview(e.target.result);
+      };
+      reader.onerror = () => {
+        alert("Erreur lors de la lecture de l'image. Veuillez réessayer.");
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -574,7 +638,7 @@ const Gallery = () => {
           <Input 
             type="file" 
             accept="image/*"
-            onChange={e => setFile(e.target.files[0])} 
+            onChange={handleFileChange} 
           />
           <ButtonContainer>
             <Button onClick={handleUpload}>
